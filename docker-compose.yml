@@ -1,0 +1,131 @@
+version: "3.9"
+services:
+    app:
+        build:
+            args:
+                user: actor
+                uid: 1000
+            context: ./
+            dockerfile: Dockerfile
+        image: app-lemp81
+        container_name: app
+        restart: always
+        depends_on:
+            - db
+            - nginx
+            - minio-bucket
+            - redis
+        environment:
+            RAY_ENABLED: true
+            XDEBUG_MODE: "coverage"
+            XDEBUG_CONFIG: "client_host=host.docker.internal"
+        volumes:
+            - ./src:/var/www
+        networks:
+            - nexus
+    db:
+        image: mariadb:10.7
+        container_name: db
+        restart: always
+        ports:
+            - "3307:3306"
+        environment:
+            MYSQL_ALLOW_EMPTY_PASSWORD: yes
+            MYSQL_DATABASE: laravel
+            TZ: "Asia/Jakarta"
+        volumes:
+            - db:/var/lib/mysql
+        networks:
+            - nexus
+    nginx:
+        image: nginx:1.21-alpine
+        container_name: nginx
+        restart: always
+        ports:
+            - "8001:80"
+        volumes:
+            - ./src:/var/www
+            - ./nginx/conf.d:/etc/nginx/conf.d
+        networks:
+            - nexus
+    minio:
+        image: minio/minio:latest
+        container_name: minio
+        ports:
+            - "9010:9010"
+            - "9011:9011"
+        volumes:
+            - minio-data:/data
+        environment:
+            MINIO_USE_HTTPS: false
+            MINIO_ROOT_USER: "minioadmin"
+            MINIO_ROOT_PASSWORD: "minioadmin"
+        command: minio server /data --address ":9010" --console-address ":9011"
+        restart: always
+        networks:
+            - nexus
+    minio-bucket:
+        image: minio/mc
+        container_name: minio-bucket
+        depends_on:
+            - minio
+        networks:
+            - nexus
+        entrypoint: >
+            /bin/sh -c "
+            sleep 5;
+            /usr/bin/mc alias set myminio http://minio:9010 minioadmin minioadmin;
+            /usr/bin/mc mb myminio/app;
+            /usr/bin/mc policy set public myminio/app;
+            exit 0;
+            "
+    mailhog:
+        image: "mailhog/mailhog:latest"
+        container_name: mailhog
+        restart: always
+        ports:
+            - "1026:1025"
+            - "8026:8025"
+        networks:
+            - nexus
+    redis:
+        image: "redis:alpine"
+        container_name: redis
+        restart: always
+        ports:
+            - "6380:6379"
+        volumes:
+            - "redis:/data"
+        networks:
+            - nexus
+    queue-worker:
+        image: app-lemp81:latest
+        container_name: queue-worker
+        restart: always
+        depends_on:
+            - app
+        command: "php artisan queue:listen"
+        volumes:
+            - ./src:/var/www/
+        networks:
+            - nexus
+    buggregator:
+        image: butschster/buggregator:latest
+        container_name: ray
+        ports:
+            - "23517:8000"
+            - "1025:1025"
+            - "9912:9912"
+            - "9913:9913"
+        networks:
+            - nexus
+networks:
+    nexus:
+        driver: bridge
+volumes:
+    db:
+        driver: local
+    minio-data:
+        driver: local
+    redis:
+        driver: local
